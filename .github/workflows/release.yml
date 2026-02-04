@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write  # For GitHub release
-      id-token: write  # For npm provenance
+      id-token: write  # For npm Trusted Publishing (OIDC)
 
     steps:
       - name: Checkout
@@ -31,10 +31,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      # Uses OIDC Trusted Publishing - no NPM_TOKEN needed!
       - name: Publish to npm
         run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
