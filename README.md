@@ -59,8 +59,8 @@ Create a new SDK instance.
 | `baseUrl` | `string` | `https://varie.ai/api` | API base URL |
 | `cacheEnabled` | `boolean` | `true` | Enable IndexedDB caching |
 | `rateLimitPerSecond` | `number` | `5` | Max requests per second |
-| `discoverCacheTTL` | `number` | `300000` | Cache TTL for discover (5 min) |
-| `characterCacheTTL` | `number` | `3600000` | Cache TTL for characters (1 hr) |
+| `discoverCacheTTL` | `number` | `3600000` | Cache TTL for discover (1 hour) |
+| `characterCacheTTL` | `number` | `604800000` | Cache TTL for characters (1 week) |
 
 ### `sdk.discover(options?)`
 
@@ -72,7 +72,6 @@ List available characters.
 | `cursor` | `string` | Pagination cursor |
 | `genre` | `string` | Filter by genre |
 | `language` | `string` | Filter by language |
-| `skipCache` | `boolean` | Bypass cache |
 
 Returns: `Promise<DiscoverResponse>`
 

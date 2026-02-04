@@ -22,8 +22,8 @@ import { unpackModel, isVarieBundle } from './unpack';
 
 // Default configuration
 const DEFAULT_BASE_URL = 'https://varie.ai/api';
-const DEFAULT_DISCOVER_TTL = 5 * 60 * 1000; // 5 minutes
-const DEFAULT_CHARACTER_TTL = 60 * 60 * 1000; // 1 hour
+const DEFAULT_DISCOVER_TTL = 60 * 60 * 1000; // 1 hour
+const DEFAULT_CHARACTER_TTL = 7 * 24 * 60 * 60 * 1000; // 1 week
 const DEFAULT_RATE_LIMIT = 5; // requests per second
 
 /**

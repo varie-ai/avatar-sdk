@@ -85,9 +85,9 @@ export interface SDKOptions {
   cacheEnabled?: boolean;
   /** Max API requests per second (default: 5) */
   rateLimitPerSecond?: number;
-  /** Cache TTL for character list in ms (default: 5 minutes) */
+  /** Cache TTL for character list in ms (default: 1 hour) */
   discoverCacheTTL?: number;
-  /** Cache TTL for individual characters in ms (default: 1 hour) */
+  /** Cache TTL for individual characters in ms (default: 1 week) */
   characterCacheTTL?: number;
 }
 
