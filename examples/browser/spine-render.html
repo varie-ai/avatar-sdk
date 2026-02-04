@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Varie Avatar SDK - Spine Rendering with Eye Tracking</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      margin: 0;
+      padding: 2rem;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    h1 {
+      color: white;
+      margin-bottom: 0.5rem;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+    .subtitle {
+      color: rgba(255,255,255,0.8);
+      margin-bottom: 2rem;
+    }
+    .container {
+      background: white;
+      border-radius: 16px;
+      padding: 2rem;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+      max-width: 500px;
+      width: 100%;
+    }
+    #canvas-container {
+      width: 100%;
+      height: 400px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #f8f8f8;
+      border-radius: 8px;
+      margin-bottom: 1rem;
+      position: relative;
+    }
+    canvas {
+      max-width: 100%;
+      max-height: 100%;
+    }
+    .status {
+      text-align: center;
+      color: #666;
+      font-size: 0.9rem;
+    }
+    .status.loading { color: #0F95B0; }
+    .status.error { color: #dc2626; }
+    .status.success { color: #16a34a; }
+    .controls {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: center;
+      margin-top: 1rem;
+      flex-wrap: wrap;
+    }
+    button {
+      background: #0F95B0;
+      color: white;
+      border: none;
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      transition: background 0.2s;
+    }
+    button:hover { background: #0d8299; }
+    button:disabled { background: #ccc; cursor: not-allowed; }
+    .hint {
+      text-align: center;
+      color: #888;
+      font-size: 0.8rem;
+      margin-top: 1rem;
+    }
+    select {
+      padding: 0.5rem;
+      border-radius: 6px;
+      border: 1px solid #ddd;
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body>
+  <h1>Spine Rendering Example</h1>
+  <p class="subtitle">Character eyes follow your mouse cursor</p>
+
+  <div class="container">
+    <div class="controls" style="margin-bottom: 1rem;">
+      <select id="characterSelect">
+        <option value="">Loading characters...</option>
+      </select>
+      <button id="loadBtn" disabled>Load Character</button>
+    </div>
+
+    <div id="canvas-container">
+      <div id="status" class="status">Click "Load Character" to start</div>
+    </div>
+
+    <div class="controls">
+      <button id="blinkBtn" disabled>Blink</button>
+      <button id="happyBtn" disabled>Happy</button>
+      <button id="sadBtn" disabled>Sad</button>
+      <button id="excitedBtn" disabled>Excited</button>
+    </div>
+
+    <p class="hint">Move your mouse around - the character's eyes will follow!</p>
+  </div>
+
+  <!-- Spine Runtime (loaded from CDN) -->
+  <script src="https://unpkg.com/@esotericsoftware/spine-webgl@4.2.66/dist/iife/spine-webgl.js"></script>
+
+  <script type="module">
+    import { VarieAvatarSDK } from '../../dist/index.js';
+
+    const sdk = new VarieAvatarSDK();
+    const container = document.getElementById('canvas-container');
+    const status = document.getElementById('status');
+    const characterSelect = document.getElementById('characterSelect');
+    const loadBtn = document.getElementById('loadBtn');
+    const blinkBtn = document.getElementById('blinkBtn');
+    const happyBtn = document.getElementById('happyBtn');
+    const sadBtn = document.getElementById('sadBtn');
+    const excitedBtn = document.getElementById('excitedBtn');
+
+    // Spine state
+    let canvas, gl, skeleton, animationState, renderer, spineLib;
+    let animationFrameId = null;
+    let lastTime = 0;
+
+    // Gaze state
+    let currentGazeX = 0, currentGazeY = 0;
+    let smoothedGazeX = 0, smoothedGazeY = 0;
+    const GAZE_SMOOTHING = 0.15;
+    const TRACK_GAZE = 2;
+    const TRACK_GAZE_VERTICAL = 3;
+    const TRACK_BLINK = 4;
+
+    // Blink state
+    let blinkTimeoutId = null;
+
+    function setStatus(msg, type = '') {
+      status.textContent = msg;
+      status.className = 'status ' + type;
+    }
+
+    // Load character list
+    async function loadCharacters() {
+      try {
+        const { characters } = await sdk.discover({ limit: 20 });
+        characterSelect.innerHTML = characters.map(c =>
+          `<option value="${c.id}">${c.name} (${c.genre})</option>`
+        ).join('');
+        loadBtn.disabled = false;
+      } catch (err) {
+        setStatus('Failed to load characters: ' + err.message, 'error');
+      }
+    }
+
+    // Load and render character
+    async function loadCharacter(characterId) {
+      // Cleanup previous
+      cleanup();
+
+      setStatus('Downloading model...', 'loading');
+
+      try {
+        // Download model using SDK
+        const model = await sdk.downloadModel(characterId, {
+          type: 'base', // Use base for faster loading
+          onProgress: (p) => setStatus(`Downloading: ${p.percent}%`, 'loading')
+        });
+
+        setStatus('Initializing Spine...', 'loading');
+
+        // Get Spine runtime
+        spineLib = window.spine;
+        if (!spineLib) throw new Error('Spine runtime not loaded');
+
+        // Create canvas
+        canvas = document.createElement('canvas');
+        canvas.width = 600;
+        canvas.height = 800;
+        canvas.style.width = '300px';
+        canvas.style.height = '400px';
+
+        // Clear container and add canvas
+        container.innerHTML = '';
+        container.appendChild(canvas);
+
+        // Get WebGL context
+        gl = canvas.getContext('webgl', { alpha: true, premultipliedAlpha: true, antialias: true });
+        if (!gl) throw new Error('WebGL not supported');
+
+        // Load texture from blob
+        const textureUrl = URL.createObjectURL(model.files.texture);
+        const img = await new Promise((resolve, reject) => {
+          const image = new Image();
+          image.onload = () => resolve(image);
+          image.onerror = () => reject(new Error('Failed to load texture'));
+          image.src = textureUrl;
+        });
+        URL.revokeObjectURL(textureUrl);
+
+        // Create GL texture
+        const glTexture = new spineLib.GLTexture(gl, img);
+
+        // Create atlas
+        const atlas = new spineLib.TextureAtlas(model.files.atlas);
+        for (const page of atlas.pages) {
+          page.setTexture(glTexture);
+        }
+
+        // Load skeleton
+        const atlasLoader = new spineLib.AtlasAttachmentLoader(atlas);
+        const skeletonJson = new spineLib.SkeletonJson(atlasLoader);
+        const skeletonData = skeletonJson.readSkeletonData(model.files.skeleton);
+
+        // Create skeleton and animation state
+        skeleton = new spineLib.Skeleton(skeletonData);
+        skeleton.setToSetupPose();
+        skeleton.updateWorldTransform(spineLib.Physics.update);
+
+        const animationStateData = new spineLib.AnimationStateData(skeletonData);
+        animationState = new spineLib.AnimationState(animationStateData);
+
+        // Play idle animation
+        if (skeletonData.findAnimation('idle')) {
+          animationState.setAnimation(0, 'idle', true);
+        }
+
+        // Play breathing if available
+        if (skeletonData.findAnimation('breathing')) {
+          animationState.setAnimation(1, 'breathing', true);
+        }
+
+        // Setup renderer
+        renderer = new spineLib.SceneRenderer(canvas, gl);
+
+        // Calculate bounds
+        const offset = new spineLib.Vector2();
+        const size = new spineLib.Vector2();
+        skeleton.getBounds(offset, size);
+
+        const centerX = offset.x + size.x / 2;
+        const centerY = offset.y + size.y / 2;
+        const viewportPadding = 1.1;
+
+        // Start render loop
+        lastTime = performance.now();
+        const render = (time) => {
+          if (!gl) return;
+
+          const delta = (time - lastTime) / 1000;
+          lastTime = time;
+
+          // Apply gaze with smoothing
+          applyGaze();
+
+          // Update animation
+          animationState.update(delta);
+          animationState.apply(skeleton);
+          skeleton.update(delta);
+          skeleton.updateWorldTransform(spineLib.Physics.update);
+
+          // Render
+          gl.viewport(0, 0, canvas.width, canvas.height);
+          gl.clearColor(0, 0, 0, 0);
+          gl.clear(gl.COLOR_BUFFER_BIT);
+
+          renderer.camera.position.x = centerX;
+          renderer.camera.position.y = centerY;
+          renderer.camera.viewportWidth = size.x * viewportPadding;
+          renderer.camera.viewportHeight = size.y * viewportPadding;
+
+          renderer.begin();
+          renderer.drawSkeleton(skeleton, true);
+          renderer.end();
+
+          animationFrameId = requestAnimationFrame(render);
+        };
+
+        animationFrameId = requestAnimationFrame(render);
+
+        // Start auto-blink
+        scheduleNextBlink();
+
+        // Enable control buttons
+        blinkBtn.disabled = false;
+        happyBtn.disabled = false;
+        sadBtn.disabled = false;
+        excitedBtn.disabled = false;
+
+        setStatus('Move your mouse to control eye gaze!', 'success');
+
+      } catch (err) {
+        setStatus('Error: ' + err.message, 'error');
+        console.error(err);
+      }
+    }
+
+    // Apply gaze using look_left/look_right/look_up/look_down animations
+    function applyGaze() {
+      if (!animationState || !skeleton) return;
+
+      // Smooth the gaze
+      smoothedGazeX += (currentGazeX - smoothedGazeX) * GAZE_SMOOTHING;
+      smoothedGazeY += (currentGazeY - smoothedGazeY) * GAZE_SMOOTHING;
+
+      const x = smoothedGazeX;
+      const y = smoothedGazeY;
+      const skeletonData = skeleton.data;
+
+      // Check if gaze animations exist
+      const hasHorizontal = skeletonData.findAnimation('look_left') && skeletonData.findAnimation('look_right');
+      const hasVertical = skeletonData.findAnimation('look_up') && skeletonData.findAnimation('look_down');
+
+      // Horizontal gaze
+      if (hasHorizontal) {
+        if (Math.abs(x) > 0.1) {
+          const animName = x < 0 ? 'look_left' : 'look_right';
+          const currentTrack = animationState.getCurrent(TRACK_GAZE);
+
+          if (!currentTrack || currentTrack.animation?.name !== animName) {
+            const track = animationState.setAnimation(TRACK_GAZE, animName, false);
+            if (track) {
+              track.alpha = Math.min(1.0, Math.abs(x));
+              track.trackTime = 0.3;
+              track.timeScale = 0;
+            }
+          } else if (currentTrack) {
+            currentTrack.alpha = Math.min(1.0, Math.abs(x));
+          }
+        } else {
+          const currentTrack = animationState.getCurrent(TRACK_GAZE);
+          if (currentTrack?.animation) {
+            animationState.setEmptyAnimation(TRACK_GAZE, 0.2);
+          }
+        }
+      }
+
+      // Vertical gaze
+      if (hasVertical) {
+        if (Math.abs(y) > 0.1) {
+          const animName = y > 0 ? 'look_up' : 'look_down';
+          const currentTrack = animationState.getCurrent(TRACK_GAZE_VERTICAL);
+
+          if (!currentTrack || currentTrack.animation?.name !== animName) {
+            const track = animationState.setAnimation(TRACK_GAZE_VERTICAL, animName, false);
+            if (track) {
+              track.alpha = Math.min(1.0, Math.abs(y));
+              track.trackTime = 0.3;
+              track.timeScale = 0;
+            }
+          } else if (currentTrack) {
+            currentTrack.alpha = Math.min(1.0, Math.abs(y));
+          }
+        } else {
+          const currentTrack = animationState.getCurrent(TRACK_GAZE_VERTICAL);
+          if (currentTrack?.animation) {
+            animationState.setEmptyAnimation(TRACK_GAZE_VERTICAL, 0.2);
+          }
+        }
+      }
+    }
+
+    // Blink
+    function triggerBlink() {
+      if (!animationState || !skeleton) return;
+      if (skeleton.data.findAnimation('blink')) {
+        const track = animationState.setAnimation(TRACK_BLINK, 'blink', false);
+        if (track) track.alpha = 1.0;
+      }
+    }
+
+    function scheduleNextBlink() {
+      if (blinkTimeoutId) clearTimeout(blinkTimeoutId);
+      const delay = 3000 + Math.random() * 3000; // 3-6 seconds
+      blinkTimeoutId = setTimeout(() => {
+        triggerBlink();
+        scheduleNextBlink();
+      }, delay);
+    }
+
+    // Expression helper (uses floating/overlay slots if available)
+    function setExpression(name) {
+      if (!skeleton) return;
+
+      // Find expression slots
+      for (const slot of skeleton.slots) {
+        const slotName = slot.data.name;
+        if (slotName === 'expr_floating_slot') {
+          const attachment = skeleton.getAttachment(slot.data.index, `expr_float_${name}`);
+          slot.setAttachment(attachment || null);
+        }
+      }
+
+      // Auto-clear after 3 seconds
+      setTimeout(() => {
+        for (const slot of skeleton.slots) {
+          if (slot.data.name === 'expr_floating_slot') {
+            slot.setAttachment(null);
+          }
+        }
+      }, 3000);
+    }
+
+    // Cleanup
+    function cleanup() {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+        animationFrameId = null;
+      }
+      if (blinkTimeoutId) {
+        clearTimeout(blinkTimeoutId);
+        blinkTimeoutId = null;
+      }
+      if (renderer) renderer.dispose();
+      renderer = null;
+      skeleton = null;
+      animationState = null;
+      gl = null;
+      canvas = null;
+    }
+
+    // Mouse tracking
+    document.addEventListener('mousemove', (e) => {
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      // Convert to -1 to 1 range
+      currentGazeX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      currentGazeY = -(((e.clientY - rect.top) / rect.height) * 2 - 1); // Flip Y
+      // Clamp
+      currentGazeX = Math.max(-1, Math.min(1, currentGazeX));
+      currentGazeY = Math.max(-1, Math.min(1, currentGazeY));
+    });
+
+    // Event listeners
+    loadBtn.addEventListener('click', () => {
+      const id = characterSelect.value;
+      if (id) loadCharacter(id);
+    });
+
+    blinkBtn.addEventListener('click', triggerBlink);
+    happyBtn.addEventListener('click', () => setExpression('happy_hearts'));
+    sadBtn.addEventListener('click', () => setExpression('sad_heart'));
+    excitedBtn.addEventListener('click', () => setExpression('excited_sparkle'));
+
+    // Initialize
+    loadCharacters();
+  </script>
+</body>
+</html>

@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Varie Avatar SDK - Browser Example</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 2rem;
+      background: #f5f5f5;
+    }
+    h1 {
+      color: #0F95B0;
+    }
+    .card {
+      background: white;
+      border-radius: 8px;
+      padding: 1rem;
+      margin: 1rem 0;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .character {
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+    }
+    .character img {
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
+      object-fit: cover;
+    }
+    .character-info h3 {
+      margin: 0 0 0.5rem 0;
+    }
+    .character-info p {
+      margin: 0;
+      color: #666;
+    }
+    .tags {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 0.5rem;
+    }
+    .tag {
+      background: #e0f2f7;
+      color: #0F95B0;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+    }
+    button {
+      background: #0F95B0;
+      color: white;
+      border: none;
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 1rem;
+    }
+    button:hover {
+      background: #0d8299;
+    }
+    button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    #status {
+      padding: 1rem;
+      background: #e8f5e9;
+      border-radius: 4px;
+      margin: 1rem 0;
+    }
+    #status.error {
+      background: #ffebee;
+      color: #c62828;
+    }
+    pre {
+      background: #1e1e1e;
+      color: #d4d4d4;
+      padding: 1rem;
+      border-radius: 4px;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body>
+  <h1>Varie Avatar SDK - Browser Example</h1>
+
+  <div class="card">
+    <h2>1. Discover Characters</h2>
+    <button id="discoverBtn">Discover Characters</button>
+    <div id="characters"></div>
+  </div>
+
+  <div class="card">
+    <h2>2. Download Model</h2>
+    <p>Click on a character above, then:</p>
+    <button id="downloadBtn" disabled>Download Model</button>
+    <div id="downloadStatus"></div>
+  </div>
+
+  <div class="card">
+    <h2>Status</h2>
+    <div id="status">Ready</div>
+  </div>
+
+  <script type="module">
+    // Import SDK (adjust path for your setup)
+    // In production: import { VarieAvatarSDK } from '@varie-ai/avatar-sdk';
+    import { VarieAvatarSDK } from '../../dist/index.js';
+
+    const sdk = new VarieAvatarSDK();
+    let selectedCharacter = null;
+
+    const status = document.getElementById('status');
+    const charactersDiv = document.getElementById('characters');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const downloadStatus = document.getElementById('downloadStatus');
+
+    function setStatus(msg, isError = false) {
+      status.textContent = msg;
+      status.className = isError ? 'error' : '';
+    }
+
+    // Discover characters
+    document.getElementById('discoverBtn').addEventListener('click', async () => {
+      setStatus('Discovering characters...');
+      charactersDiv.innerHTML = '';
+
+      try {
+        const { characters } = await sdk.discover({ limit: 5 });
+
+        characters.forEach(char => {
+          const div = document.createElement('div');
+          div.className = 'card character';
+          div.innerHTML = `
+            <img src="${char.avatarUrl}" alt="${char.name}">
+            <div class="character-info">
+              <h3>${char.name}</h3>
+              <p>${char.tagline}</p>
+              <div class="tags">
+                <span class="tag">${char.genre}</span>
+                ${char.personalityTags.slice(0, 2).map(t => `<span class="tag">${t}</span>`).join('')}
+              </div>
+            </div>
+          `;
+          div.addEventListener('click', () => selectCharacter(char));
+          charactersDiv.appendChild(div);
+        });
+
+        setStatus(`Found ${characters.length} characters`);
+      } catch (err) {
+        setStatus(`Error: ${err.message}`, true);
+      }
+    });
+
+    function selectCharacter(char) {
+      selectedCharacter = char;
+      downloadBtn.disabled = false;
+      setStatus(`Selected: ${char.name}`);
+    }
+
+    // Download model
+    downloadBtn.addEventListener('click', async () => {
+      if (!selectedCharacter) return;
+
+      downloadBtn.disabled = true;
+      downloadStatus.innerHTML = 'Downloading...';
+
+      try {
+        const model = await sdk.downloadModel(selectedCharacter.id, {
+          type: 'base', // Use base for faster demo
+          onProgress: (p) => {
+            downloadStatus.innerHTML = `Downloading: ${p.percent}%`;
+          }
+        });
+
+        downloadStatus.innerHTML = `
+          <pre>Model downloaded!
+Size: ${(model.size / 1024 / 1024).toFixed(2)} MB
+Type: ${model.type}
+Files: ${Array.from(model.files.raw.keys()).join(', ')}</pre>
+        `;
+        setStatus('Model ready for Spine runtime');
+      } catch (err) {
+        downloadStatus.innerHTML = `<pre class="error">Error: ${err.message}</pre>`;
+        setStatus(`Error: ${err.message}`, true);
+      } finally {
+        downloadBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
